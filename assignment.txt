@@ -1,0 +1,27 @@
+Flowline
+
+Build a small tool that reads AWS VPC flow logs and answers questions about the traffic. Do the core, then pick **one track**. Clear choices matter more than extra features. Plan for **3–5 hours**.
+
+## Core
+- **Read the logs.** Each log file starts with a header line that lists its fields in order. Read records using that header, and don't assume one fixed layout. Include at least two sample files with different layouts.
+- **Odd records:** decide how to handle `NODATA`/`SKIPDATA`, `-` placeholders, IPv6 addresses and broken lines (accept, reject or set aside), and explain why.
+- **Sample data:** include a generator with a fixed seed so we can reproduce your data.
+- **Queries** (any language, storage and interface):
+  1. Filter records by any mix of source/destination IP, source/destination port, protocol and action.
+  2. Count records per conversation (source IP, source port, destination IP, destination port, protocol).
+  3. Top N talkers by bytes in a time window `[from, to)`.
+- **Decide and document:** Do filters also apply to queries 2 and 3? Is A→B the same conversation as B→A? Which time-window does a record belong to, given that it has both a start and an end time?
+
+## Pick One Track
+- **A. Many Hands (scale):** Split the work across several workers and combine the results. Duplicate input and a worker crashing mid-batch must still give exactly the same answers as a simple single-threaded run. Provide a k8s/kind/minikube or Docker Compose setup. Explain how you split the work, how you avoid lost or double-counted data, and where the design stops scaling.
+- **B. Trust but Verify (data quality):** Detect at least five kinds of bad data, such as broken fields, impossible values, duplicates, late records, one-sided TCP conversations or sudden traffic spikes. Build a tool that inserts labeled bad data, then measure how much of each kind you catch and how many false alarms you raise. Explain why these numbers matter for billing and alerting.
+- **C. Every Nanosecond (performance):** Write a simple version and a fast version of one core part. Prove they produce identical output on at least 1 GB of input. Use a proper benchmarking tool and report speed and memory. Include one optimization that didn't help, and say whether you'd ship the fast version.
+
+## Deliverables
+- Code, tests, and **one command** that builds, tests and runs a demo.
+- A README covering setup, design, assumptions, trade-offs and limits.
+- A one-page `DECISIONS.md` with three decisions and the alternative you rejected for each.
+- Git history with regular commits.
+
+## Ground Rules
+AI tools are allowed; say how you used them. In the next interview we'll talk through your choices and extend your code together. We evaluate correctness, design, depth of your chosen track, tests, clarity of your write-up, and how easily it runs.
