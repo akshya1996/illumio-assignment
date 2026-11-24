@@ -1,5 +1,5 @@
 // Package query answers questions about parsed flow records: filtering them
-// by field values and counting conversations.
+// by field values, counting conversations, and finding the top talkers.
 package query
 
 import (
