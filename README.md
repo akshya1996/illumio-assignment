@@ -163,3 +163,16 @@ The generated file can be used with any Flowline query:
 go run ./cmd/flowline --input samples/generated_flow.log --query conversations
 go run ./cmd/flowline --input samples/generated_flow.log --query top-talkers --from 1000 --to 4600 --n 5
 ```
+
+## Use of AI tools
+
+I used Claude Code (an AI coding assistant) for the following:
+
+- **Code comments:** Added doc and inline comments to the Go source and test files (`internal/model`, `internal/parser`, `internal/query`, `cmd/flowline`). Code behavior was not changed.
+- **Checking the README:** Ran every command in this README to make sure it builds, passes tests and gives the documented results.
+- **CLI output fixes:** Fixed `filter` output, which printed ports as memory addresses instead of numbers. Made `conversations` output easier to read, fixed plurals ("1 record"), and sorted conversations by IP and port as numbers instead of as text. Added tests for these changes in `cmd/flowline/main_test.go`.
+- **README updates:** Added example output and clarified the descriptions of `--from`, `--to` and `--action`.
+- **Review:** Reviewed the README, DECISIONS.md and the sample generator against the assignment requirements.
+- **DECISIONS.md:** Rewrote it into the three-decision format, with rejected alternatives, based on how the code already behaves.
+
+I reviewed all AI-generated changes and checked them by running `go test ./...` and `go vet ./...`.
