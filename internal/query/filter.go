@@ -1,4 +1,5 @@
-// Package query selects flow records that match given criteria.
+// Package query answers questions about parsed flow records: filtering them
+// by field values and counting conversations.
 package query
 
 import (
