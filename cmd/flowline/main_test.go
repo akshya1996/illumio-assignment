@@ -12,10 +12,14 @@ package main
 
 import (
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/akshya1996/illumio-assignment/internal/query"
 )
 
 // TestRunMissingInput checks that --input is required.
@@ -151,6 +155,12 @@ func TestRunFilterBySourceIP(t *testing.T) {
 	if strings.Contains(string(output), "10.0.0.3") {
 		t.Errorf("output should not contain the non-matching source IP, got:\n%s", output)
 	}
+
+	// Ports must be printed as numbers, not as pointer addresses
+	want := "10.0.0.1:50000 -> 10.0.0.2:443 protocol=6 packets=10 bytes=500 start=100 end=150 action=ACCEPT"
+	if !strings.Contains(string(output), want) {
+		t.Errorf("expected record line %q, got:\n%s", want, output)
+	}
 }
 
 // TestRunConversations runs the conversations query end to end. The first
@@ -201,7 +211,11 @@ func TestRunConversations(t *testing.T) {
 		t.Errorf("expected one conversation with 2 records, got:\n%s", output)
 	}
 
-	if !strings.Contains(string(output), "1 records") {
+	if !strings.Contains(string(output), "10.0.0.1:50000 -> 10.0.0.2:443 protocol=6: 2 records") {
+		t.Errorf("expected one conversation with 2 records, got:\n%s", output)
+	}
+
+	if !strings.Contains(string(output), "10.0.0.2:443 -> 10.0.0.1:50000 protocol=6: 1 record\n") {
 		t.Errorf("expected reverse conversation with 1 record, got:\n%s", output)
 	}
 }
@@ -269,5 +283,60 @@ func TestRunTopTalkers(t *testing.T) {
 
 	if strings.Contains(string(output), "10.0.0.3") {
 		t.Errorf("expected top 2 talkers only, got:\n%s", output)
+	}
+}
+
+// TestFormatEndpoint checks how an IP and port are printed, including
+// missing values and IPv6 brackets.
+func TestFormatEndpoint(t *testing.T) {
+	ipv4 := netip.MustParseAddr("10.0.0.1")
+	ipv6 := netip.MustParseAddr("2001:db8::1")
+	port := 443
+
+	tests := []struct {
+		name string
+		ip   *netip.Addr
+		port *int
+		want string
+	}{
+		{"IPv4 with port", &ipv4, &port, "10.0.0.1:443"},
+		{"IPv6 with port", &ipv6, &port, "[2001:db8::1]:443"},
+		{"missing port", &ipv4, nil, "10.0.0.1:-"},
+		{"missing IP", nil, &port, "-:443"},
+		{"both missing", nil, nil, "-:-"},
+	}
+
+	for _, tt := range tests {
+		if got := formatEndpoint(tt.ip, tt.port); got != tt.want {
+			t.Errorf("%s: expected %q, got %q", tt.name, tt.want, got)
+		}
+	}
+}
+
+// TestCompareConversationsNumericOrder checks that conversations are sorted
+// by IP as numbers, not as text: 10.0.0.2 must come before 10.0.0.10, and a
+// missing port must come before port 0.
+func TestCompareConversationsNumericOrder(t *testing.T) {
+	ip2 := netip.MustParseAddr("10.0.0.2")
+	ip10 := netip.MustParseAddr("10.0.0.10")
+
+	conversations := []query.Conversation{
+		{SourceIP: ip10, SourceIPPresent: true},
+		{SourceIP: ip2, SourceIPPresent: true, SourcePort: 0, SourcePortPresent: true},
+		{SourceIP: ip2, SourceIPPresent: true}, // no source port
+	}
+
+	slices.SortFunc(conversations, compareConversations)
+
+	if conversations[0].SourceIP != ip2 || conversations[0].SourcePortPresent {
+		t.Errorf("expected 10.0.0.2 with no port first, got %+v", conversations[0])
+	}
+
+	if conversations[1].SourceIP != ip2 || !conversations[1].SourcePortPresent {
+		t.Errorf("expected 10.0.0.2 port 0 second, got %+v", conversations[1])
+	}
+
+	if conversations[2].SourceIP != ip10 {
+		t.Errorf("expected 10.0.0.10 last, got %+v", conversations[2])
 	}
 }

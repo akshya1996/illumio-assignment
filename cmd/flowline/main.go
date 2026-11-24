@@ -20,13 +20,16 @@
 package main
 
 import (
+	"cmp"
 	"flag"
 	"fmt"
 	"net/netip"
 	"os"
-	"sort"
+	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/akshya1996/illumio-assignment/internal/model"
 	"github.com/akshya1996/illumio-assignment/internal/parser"
 	"github.com/akshya1996/illumio-assignment/internal/query"
 )
@@ -160,7 +163,7 @@ func run(args []string) error {
 		fmt.Fprintln(os.Stderr, "Warning:", parseErr)
 	}
 
-	fmt.Printf("Parsed %d valid records\n", len(records))
+	fmt.Printf("Parsed %s\n", plural(len(records), "valid record"))
 
 	// Apply the filter for every query type. With no filter flags set this
 	// keeps all records.
@@ -168,33 +171,30 @@ func run(args []string) error {
 
 	switch *queryType {
 	case "filter":
-		fmt.Printf("Matched %d records:\n", len(filteredRecords))
+		fmt.Printf("Matched %s:\n", plural(len(filteredRecords), "record"))
 
 		for _, record := range filteredRecords {
-			fmt.Printf("%+v\n", record)
+			fmt.Println(formatRecord(record))
 		}
 
 	case "conversations":
 		counts := query.CountConversations(filteredRecords)
 
 		// Map order is random, so collect the keys and sort them to get the
-		// same output every run. Sorting by the printed text is simple and
-		// stable, but it is text order, not numeric (e.g. "10.0.0.10"
-		// sorts before "10.0.0.2").
-
+		// same output every run.
 		conversations := make([]query.Conversation, 0, len(counts))
 		for conversation := range counts {
 			conversations = append(conversations, conversation)
 		}
 
-		sort.Slice(conversations, func(i, j int) bool {
-			return fmt.Sprint(conversations[i]) < fmt.Sprint(conversations[j])
-		})
+		slices.SortFunc(conversations, compareConversations)
 
-		fmt.Printf("Found %d conversations:\n", len(counts))
+		fmt.Printf("Found %s:\n", plural(len(counts), "conversation"))
 
 		for _, conversation := range conversations {
-			fmt.Printf("%+v: %d records\n", conversation, counts[conversation])
+			fmt.Printf("%s: %s\n",
+				formatConversation(conversation),
+				plural(counts[conversation], "record"))
 		}
 
 	case "top-talkers":
@@ -208,4 +208,107 @@ func run(args []string) error {
 	}
 
 	return nil
+}
+
+// formatRecord prints a record on one line, for example:
+//
+//	10.0.0.1:50000 -> 10.0.0.2:443 protocol=6 packets=10 bytes=500 start=100 end=150 action=ACCEPT
+func formatRecord(record model.FlowRecord) string {
+	return fmt.Sprintf("%s -> %s protocol=%d packets=%d bytes=%d start=%d end=%d action=%s",
+		formatEndpoint(record.SourceIP, record.SourcePort),
+		formatEndpoint(record.DestinationIP, record.DestinationPort),
+		record.Protocol,
+		record.Packets,
+		record.Bytes,
+		record.StartTime,
+		record.EndTime,
+		record.Action,
+	)
+}
+
+// formatConversation prints a conversation key on one line, for example:
+//
+//	10.0.0.1:50000 -> 10.0.0.2:443 protocol=6
+func formatConversation(c query.Conversation) string {
+	var srcIP, dstIP *netip.Addr
+	var srcPort, dstPort *int
+
+	// Turn the Present flags back into nil/non-nil so formatEndpoint can
+	// print missing values as "-".
+	if c.SourceIPPresent {
+		srcIP = &c.SourceIP
+	}
+	if c.SourcePortPresent {
+		srcPort = &c.SourcePort
+	}
+	if c.DestinationIPPresent {
+		dstIP = &c.DestinationIP
+	}
+	if c.DestinationPortPresent {
+		dstPort = &c.DestinationPort
+	}
+
+	return fmt.Sprintf("%s -> %s protocol=%d",
+		formatEndpoint(srcIP, srcPort),
+		formatEndpoint(dstIP, dstPort),
+		c.Protocol,
+	)
+}
+
+// formatEndpoint prints an IP and port as "ip:port". A missing IP or port
+// is printed as "-". IPv6 addresses are wrapped in brackets, as in
+// "[2001:db8::1]:443", so the port is not confused with the address.
+func formatEndpoint(ip *netip.Addr, port *int) string {
+	host := "-"
+	if ip != nil {
+		host = ip.String()
+		if ip.Is6() {
+			host = "[" + host + "]"
+		}
+	}
+
+	portText := "-"
+	if port != nil {
+		portText = strconv.Itoa(*port)
+	}
+
+	return host + ":" + portText
+}
+
+// compareConversations orders conversations by source IP, source port,
+// destination IP, destination port, then protocol. IPs and ports are
+// compared as numbers, so 10.0.0.2 comes before 10.0.0.10. A missing value
+// comes before any real one, so a missing port sorts before port 0.
+func compareConversations(a, b query.Conversation) int {
+	return cmp.Or(
+		compareOptional(a.SourceIPPresent, b.SourceIPPresent, a.SourceIP.Compare(b.SourceIP)),
+		compareOptional(a.SourcePortPresent, b.SourcePortPresent, cmp.Compare(a.SourcePort, b.SourcePort)),
+		compareOptional(a.DestinationIPPresent, b.DestinationIPPresent, a.DestinationIP.Compare(b.DestinationIP)),
+		compareOptional(a.DestinationPortPresent, b.DestinationPortPresent, cmp.Compare(a.DestinationPort, b.DestinationPort)),
+		cmp.Compare(a.Protocol, b.Protocol),
+	)
+}
+
+// compareOptional compares two optional values. If only one is present, the
+// missing one comes first. Otherwise it returns valueResult, the result of
+// comparing the values themselves.
+func compareOptional(aPresent, bPresent bool, valueResult int) int {
+	if aPresent != bPresent {
+		if !aPresent {
+			return -1
+		}
+		return 1
+	}
+
+	return valueResult
+}
+
+// plural returns the count followed by word, adding "s" unless the count
+// is 1 (e.g. "1 record", "2 records").
+func plural(count int, word string) string {
+	if count == 1 {
+		return fmt.Sprintf("%d %s", count, word)
+	}
+
+	return fmt.Sprintf("%d %ss", count, word)
 }
