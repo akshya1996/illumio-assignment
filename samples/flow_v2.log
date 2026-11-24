@@ -1,0 +1,4 @@
+version account-id interface-id srcaddr dstaddr srcport dstport protocol packets bytes start end action log-status
+2 123456789 eni-123 10.0.0.1 10.0.0.2 50000 443 6 10 500 100 150 ACCEPT OK
+2 123456789 eni-123 10.0.0.1 10.0.0.3 50001 443 6 5 300 110 160 ACCEPT OK
+2 123456789 eni-123 10.0.0.2 10.0.0.1 443 50000 6 8 400 120 170 REJECT OK
