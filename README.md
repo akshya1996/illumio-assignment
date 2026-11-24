@@ -38,6 +38,18 @@ It runs these steps in order and stops at the first one that fails, so the queri
 
 Other targets: `make build`, `make test`, `make generate`, `make clean` (removes `./flowline`).
 
+
+The data-quality evaluation (Track B) can be run separately:
+
+```bash
+go run ./cmd/qualitygen
+go run ./cmd/qualityeval
+```
+
+This generates a deterministic dataset with labeled anomalies and evaluates the data-quality checks against the ground-truth CSV.
+
+
+
 ## Build
 
 ```bash
@@ -206,17 +218,68 @@ go run ./cmd/flowline --input samples/generated_flow.log --query conversations
 go run ./cmd/flowline --input samples/generated_flow.log --query top-talkers --from 1000 --to 4600 --n 3
 ```
 
+## Track B: Data Quality — Trust but Verify
+
+Flowline includes a data-quality evaluation tool that detects anomalies in VPC flow logs.
+
+### Detected anomalies
+
+The implementation checks for five types of data-quality issues:
+
+1. **Broken fields:** Records that cannot be parsed, such as invalid IP addresses or malformed fields.
+2. **Impossible values:** Negative packet or byte counts, and records where the start time is after the end time.
+3. **Duplicates:** Exact duplicate flow records.
+4. **One-sided TCP:** TCP flows without a corresponding reverse-direction flow.
+5. **Traffic spikes:** Unusually high byte volumes for a source IP within a 60-second time bucket, compared with its median bucket volume.
+
+### Generate test data
+
+The quality data generator uses a fixed random seed and injects labeled anomalies into the generated dataset.
+
+```bash
+go run ./cmd/qualitygen
+```
+
+This generates:
+- `samples/quality_flow.log`
+- `samples/quality_ground_truth.csv`
+
+### Run the evaluation
+
+```bash
+go run ./cmd/qualityeval
+```
+
+The evaluator compares detected anomalies against the ground-truth labels and reports:
+- Expected anomalies
+- Correctly detected anomalies
+- False positives
+- Missed anomalies
+- Catch rate per category
+- Overall catch rate
+
+### Evaluation results
+
+On the generated test dataset, all five anomaly categories were detected successfully, with a 100% catch rate and zero false positives.
+
+These results demonstrate correctness against the injected test cases. They do not establish production detection accuracy. The traffic-spike threshold is heuristic and may require tuning against real traffic patterns.
+
 ## Design
 
 Flowline is a pipeline of three steps: **parse → filter → query**.
+
 
 | Package | Role |
 |---|---|
 | `internal/model` | `FlowRecord`, the parsed form of one log line. |
 | `internal/parser` | Reads the header, maps each column name to its position, then parses each line by name. Bad lines are collected as errors instead of stopping the run. |
 | `internal/query` | `FilterRecords`, `CountConversations` and `TopTalkers`. Each is a pure function over a slice of records, so they are easy to test on their own. |
+| `internal/quality` | Implements five data-quality checks: broken fields, impossible values, duplicates, one-sided TCP flows and traffic spikes. |
 | `cmd/flowline` | The CLI. It checks all flags before opening the file, then parses, filters, and runs the selected query. |
 | `cmd/samplegen` | Writes `samples/generated_flow.log` from a fixed seed. |
+| `cmd/qualitygen` | Generates synthetic flow records with labeled anomalies and writes the ground-truth CSV. |
+| `cmd/qualityeval` | Compares detected anomalies against ground-truth labels and calculates detection metrics, including catch rate and false positives. |
+
 
 Fields that can be missing in the log (IPs and ports) are stored as pointers, so "missing" (`nil`) is never confused with a real `0`. Conversations are map keys, so they hold plain values plus a `...Present` flag for each optional field.
 
@@ -246,6 +309,7 @@ The main choices and the alternatives I rejected are in [DECISIONS.md](DECISIONS
 - `10.0.0.1` and its IPv4-mapped IPv6 form `::ffff:10.0.0.1` are treated as different addresses.
 - Output is plain text only (no JSON or CSV).
 - The generated sample data uses only the v2 layout and contains no odd records (`NODATA`, `-`, IPv6 or broken lines). Those cases are covered by the unit tests in `internal/parser`.
+- Data-quality checks use simple heuristics. One-sided TCP flows are not necessarily invalid, and traffic-spike detection may need tuning for real traffic distributions.
 
 ## Use of AI tools
 

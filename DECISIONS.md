@@ -45,3 +45,33 @@
 - `--action` accepts any case and is converted to uppercase to match the log.
 - Top talkers with equal byte totals are sorted by IP, so the output is the same on every run.
 - IPv4 and IPv4-mapped IPv6 addresses (`10.0.0.1` and `::ffff:10.0.0.1`) are treated as different addresses.
+
+
+
+## 4. Data-quality checks use simple, explainable heuristics
+
+**Decision:** Track B implements five data-quality checks: broken fields, impossible values, duplicates, one-sided TCP flows and traffic spikes.
+
+**Rejected alternative:** Building a more elaborate anomaly-detection system using statistical models or machine learning.
+
+**Why:** The assignment asks for a small tool that identifies bad data and measures how well it detects known issues. Simple checks are easier to understand, test and explain. They also make it clear why a record was flagged.
+
+### Individual checks
+
+| Check | Decision | Trade-off |
+|---|---|---|
+| Broken fields | Reuse parser errors to identify malformed records. | Malformed records are skipped and cannot be checked by record-level detectors. |
+| Impossible values | Flag negative packet or byte counts, and records where `start > end`. | These checks identify obvious invalid values but cannot detect every semantically incorrect record. |
+| Duplicates | Compare all fields in a flow record and flag subsequent exact matches. | Similar but non-identical records are not considered duplicates. |
+| One-sided TCP | Flag TCP records without a matching reverse-direction flow. | A missing reverse flow is not necessarily invalid; asymmetric routing or incomplete visibility can explain it. |
+| Traffic spikes | Group bytes by source IP and 60-second time buckets. Calculate the median bucket volume per source IP and flag buckets exceeding 3 times the median. | The threshold is heuristic and may flag legitimate traffic bursts or miss smaller anomalies. |
+
+### Evaluation approach
+
+**Decision:** Use a deterministic synthetic dataset with injected anomalies and a ground-truth CSV containing the line numbers and categories of those anomalies.
+
+**Rejected alternative:** Evaluating detection accuracy using unlabeled data or manually inspecting detector output.
+
+**Why:** Known anomaly labels make it possible to calculate true positives, false positives, false negatives and catch rate for each category. A fixed random seed makes the dataset reproducible.
+
+**Cost:** The evaluation measures detection against the injected test cases, not real-world production accuracy. The synthetic traffic distribution is deliberately controlled, so results should not be interpreted as a guarantee of production performance.
