@@ -22,6 +22,12 @@ import (
 	"github.com/akshya1996/illumio-assignment/internal/model"
 )
 
+// maxLineSize is the longest line Parse can read, in bytes. bufio.Scanner's
+// default limit is 64 KB; this raises it so unusually long lines (for
+// example, logs with many extra columns) are still read. A line longer
+// than this stops parsing with an error.
+const maxLineSize = 1024 * 1024
+
 // requiredFields lists the columns the header must contain. If any of them
 // is missing, parsing stops before reading any records.
 var requiredFields = []string{
@@ -106,6 +112,7 @@ func Parse(r io.Reader) ([]model.FlowRecord, []error) {
 	var parseErrors []error
 
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 
 	// Read the header. If there is no first line, either the read failed or
 	// the input was empty; report whichever it was.
@@ -193,7 +200,7 @@ func Parse(r io.Reader) ([]model.FlowRecord, []error) {
 	}
 
 	// Catch read errors that ended the loop early (for example, a line
-	// longer than the scanner's buffer).
+	// longer than maxLineSize).
 	if err := scanner.Err(); err != nil {
 		parseErrors = append(parseErrors, err)
 	}

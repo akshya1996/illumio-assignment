@@ -413,3 +413,39 @@ func TestParseMissingRequiredHeader(t *testing.T) {
 		}
 	}
 }
+
+// TestParseLongLine checks that a line longer than bufio.Scanner's default
+// 64 KB limit is still read. The record is padded with 100 KB of trailing
+// spaces, which are ignored when the line is split into fields.
+func TestParseLongLine(t *testing.T) {
+	input := "version srcaddr dstaddr protocol packets bytes start end action\n" +
+		"2 10.0.0.1 10.0.0.2 6 10 500 1700000000 1700000060 ACCEPT" +
+		strings.Repeat(" ", 100*1024)
+
+	records, errs := Parse(strings.NewReader(input))
+
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors, got %v", errs)
+	}
+
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+}
+
+// TestParseLineTooLong checks that a line longer than maxLineSize is
+// reported as an error instead of being silently dropped.
+func TestParseLineTooLong(t *testing.T) {
+	input := "version srcaddr dstaddr protocol packets bytes start end action\n" +
+		strings.Repeat("x", maxLineSize+1)
+
+	_, errs := Parse(strings.NewReader(input))
+
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d", len(errs))
+	}
+
+	if !strings.Contains(errs[0].Error(), "too long") {
+		t.Errorf("expected a 'too long' error, got %q", errs[0].Error())
+	}
+}

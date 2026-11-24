@@ -16,6 +16,27 @@ It parses flow log records using the field order defined in each log file's head
 ## Requirements
 
 - Go 1.27.3 or later.
+- `make` (only for the one-command demo).
+
+## Quick start
+
+One command builds the CLI, runs `go vet` and the tests, regenerates the sample data, and runs every query on the sample files:
+
+```bash
+make demo
+```
+
+It runs these steps in order and stops at the first one that fails, so the queries only run if the build and tests pass:
+
+1. `build`: builds `./flowline`.
+2. `test`: runs `go vet ./...` and `go test ./...`.
+3. `generate`: rewrites `samples/generated_flow.log`. The seed is fixed, so the file is identical every time.
+4. Runs the queries, each under an `===` heading, with the command printed above its output:
+   - filter, conversations and top talkers on `samples/flow_v2.log`
+   - the same three queries on `samples/flow_v3.log`, which has a different column order
+   - top talkers among `REJECT` traffic in the generated data, to show that filters also apply to the other queries
+
+Other targets: `make build`, `make test`, `make generate`, `make clean` (removes `./flowline`).
 
 ## Build
 
@@ -139,6 +160,27 @@ Top talkers:
 ./flowline --input samples/flow_v3.log --query conversations
 ./flowline --input samples/flow_v3.log --query top-talkers --from 200 --to 300 --n 2
 ```
+
+Output:
+
+```text
+Parsed 3 valid records
+Matched 2 records:
+10.0.1.1:52000 -> 10.0.1.2:443 protocol=6 packets=12 bytes=1200 start=200 end=250 action=ACCEPT
+10.0.1.1:52001 -> 10.0.1.3:443 protocol=6 packets=6 bytes=600 start=210 end=260 action=REJECT
+Parsed 3 valid records
+Found 3 conversations:
+10.0.1.1:52000 -> 10.0.1.2:443 protocol=6: 1 record
+10.0.1.1:52001 -> 10.0.1.3:443 protocol=6: 1 record
+10.0.1.2:443 -> 10.0.1.1:52000 protocol=6: 1 record
+Parsed 3 valid records
+Top talkers:
+10.0.1.1: 1800 bytes
+10.0.1.2: 800 bytes
+```
+
+The v3 file lists `dstaddr` before `srcaddr` (and swaps several other columns), yet the results are read into the right fields: `10.0.1.1` is correctly the source.
+
 ## Generating sample data
 
 Flowline includes a deterministic sample-data generator that produces 100 synthetic VPC flow log records.
@@ -161,8 +203,49 @@ The generated file can be used with any Flowline query:
 
 ```bash
 go run ./cmd/flowline --input samples/generated_flow.log --query conversations
-go run ./cmd/flowline --input samples/generated_flow.log --query top-talkers --from 1000 --to 4600 --n 5
+go run ./cmd/flowline --input samples/generated_flow.log --query top-talkers --from 1000 --to 4600 --n 3
 ```
+
+## Design
+
+Flowline is a pipeline of three steps: **parse → filter → query**.
+
+| Package | Role |
+|---|---|
+| `internal/model` | `FlowRecord`, the parsed form of one log line. |
+| `internal/parser` | Reads the header, maps each column name to its position, then parses each line by name. Bad lines are collected as errors instead of stopping the run. |
+| `internal/query` | `FilterRecords`, `CountConversations` and `TopTalkers`. Each is a pure function over a slice of records, so they are easy to test on their own. |
+| `cmd/flowline` | The CLI. It checks all flags before opening the file, then parses, filters, and runs the selected query. |
+| `cmd/samplegen` | Writes `samples/generated_flow.log` from a fixed seed. |
+
+Fields that can be missing in the log (IPs and ports) are stored as pointers, so "missing" (`nil`) is never confused with a real `0`. Conversations are map keys, so they hold plain values plus a `...Present` flag for each optional field.
+
+The main choices and the alternatives I rejected are in [DECISIONS.md](DECISIONS.md).
+
+## Assumptions
+
+- The first line of each file is a header naming the columns, using AWS VPC Flow Log field names (`srcaddr`, `dstport`, `log-status`, and so on). Values are separated by whitespace.
+- `start` and `end` are Unix timestamps in seconds.
+- `protocol` is an IANA protocol number (6 = TCP, 17 = UDP), not a name.
+- `action` is `ACCEPT` or `REJECT`, written in uppercase as AWS does.
+- If there is no `log-status` column, every line is treated as a normal traffic record.
+
+## Trade-offs
+
+- **Time windows use the start time only.** Each record falls in exactly one window, so nothing is counted twice, but a long flow puts all its bytes in the window where it started.
+- **Conversations are directional.** A→B and B→A are counted separately, which matches how VPC logs record flows, but answering "how much did A and B talk in total" means adding two lines.
+- **Bad lines are skipped with a warning.** One corrupt line doesn't lose the rest of the file, but results can be based on incomplete data, so warnings should be checked.
+- **Everything is in memory.** All records are loaded before querying. This keeps the code simple and lets one parse serve any query, but limits file size to available memory.
+
+## Limits
+
+- One input file per run, processed on a single thread. Very large files are limited by memory.
+- A line longer than 1 MB stops reading at that point, and the rest of the file is not processed. The error is reported.
+- Filters are exact matches only: no IP ranges (CIDR), port ranges, or OR conditions.
+- Duplicate lines are counted every time they appear.
+- `10.0.0.1` and its IPv4-mapped IPv6 form `::ffff:10.0.0.1` are treated as different addresses.
+- Output is plain text only (no JSON or CSV).
+- The generated sample data uses only the v2 layout and contains no odd records (`NODATA`, `-`, IPv6 or broken lines). Those cases are covered by the unit tests in `internal/parser`.
 
 ## Use of AI tools
 
@@ -174,5 +257,7 @@ I used Claude Code (an AI coding assistant) for the following:
 - **README updates:** Added example output and clarified the descriptions of `--from`, `--to` and `--action`.
 - **Review:** Reviewed the README, DECISIONS.md and the sample generator against the assignment requirements.
 - **DECISIONS.md:** Rewrote it into the three-decision format, with rejected alternatives, based on how the code already behaves.
+- **Long lines:** Raised the parser's maximum line length from 64 KB to 1 MB and added tests for it.
+- **Demo and write-up:** Added the `Makefile` (`make demo`) and the Design, Assumptions, Trade-offs and Limits sections of this README.
 
 I reviewed all AI-generated changes and checked them by running `go test ./...` and `go vet ./...`.
